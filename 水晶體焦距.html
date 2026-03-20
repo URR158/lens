@@ -1,0 +1,251 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>眼睛水晶體對焦模擬器 (穩定修正版)</title>
+    <style>
+        body {
+            font-family: "微軟正黑體", sans-serif;
+            background-color: #f4f4f9;
+            text-align: center;
+            margin: 0;
+            padding: 20px;
+        }
+        canvas {
+            background-color: #ffffff;
+            border: 2px solid #333;
+            box-shadow: 0 4px 8px rgba(0,0,0,0.1);
+            margin-top: 20px;
+        }
+        .controls {
+            display: flex;
+            justify-content: center;
+            gap: 40px;
+            margin-top: 20px;
+            background: #fff;
+            padding: 15px;
+            border-radius: 8px;
+            box-shadow: 0 2px 5px rgba(0,0,0,0.1);
+            max-width: 800px;
+            margin-left: auto;
+            margin-right: auto;
+        }
+        .slider-group {
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+        }
+        input[type="range"] {
+            width: 200px;
+            cursor: pointer;
+        }
+        .info {
+            margin-top: 15px;
+            font-size: 1.1em;
+            color: #444;
+            line-height: 1.5;
+        }
+        .focus-text {
+            font-size: 1.5em;
+            font-weight: bold;
+        }
+        .focused { color: #28a745; }
+        .blurry { color: #dc3545; }
+    </style>
+</head>
+<body>
+
+    <h2>👁️ 水晶體對焦物理小遊戲</h2>
+    <p>任務：移動物體後，調整水晶體的厚度，讓兩條光線完美交會在地點（視網膜）上！</p>
+    
+    <div class="controls">
+        <div class="slider-group">
+            <label for="objPos">移動物體 (物距 p): <span id="objPosVal">200</span></label>
+            <input type="range" id="objPos" min="80" max="350" value="200">
+        </div>
+        <div class="slider-group">
+            <label for="lensThickness">水晶體厚度 (改變焦距 f): <span id="thicknessVal">50</span></label>
+            <input type="range" id="lensThickness" min="10" max="90" value="50">
+        </div>
+    </div>
+
+    <div class="info" id="statusText">正在載入遊戲畫面...</div>
+
+    <canvas id="simCanvas" width="800" height="400"></canvas>
+
+    <script>
+        // 使用 window.onload 確保 HTML 元素完全載入後才執行程式碼，避免畫面出不來
+        window.onload = function() {
+            const canvas = document.getElementById('simCanvas');
+            const ctx = canvas.getContext('2d');
+            const objPosSlider = document.getElementById('objPos');
+            const thicknessSlider = document.getElementById('lensThickness');
+            const objPosVal = document.getElementById('objPosVal');
+            const thicknessVal = document.getElementById('thicknessVal');
+            const statusText = document.getElementById('statusText');
+
+            // 眼睛的固定物理常數
+            const centerY = canvas.height / 2;
+            const lensX = 400;       // 水晶體固定在畫面中間
+            const retinaX = 650;     // 視網膜固定位置
+            const objHeight = 60;    // 物體高度
+
+            function draw() {
+                // 1. 取得並更新滑軌數值
+                const p = parseInt(objPosSlider.value);            
+                const thickness = parseInt(thicknessSlider.value); 
+                const objX = lensX - p; 
+                
+                // 物理轉換：厚度與焦距的簡易線性對應
+                const f = 160 - thickness; 
+                const visualThickness = 8 + (thickness / 3); 
+
+                // 清空畫布
+                ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+                // 2. 畫主光軸
+                ctx.beginPath();
+                ctx.moveTo(0, centerY);
+                ctx.lineTo(canvas.width, centerY);
+                ctx.strokeStyle = '#ddd';
+                ctx.stroke();
+
+                // 3. 畫視網膜 (眼底)
+                ctx.beginPath();
+                ctx.moveTo(retinaX, centerY - 150);
+                ctx.quadraticCurveTo(retinaX + 50, centerY, retinaX, centerY + 150);
+                ctx.strokeStyle = '#d9534f';
+                ctx.lineWidth = 5;
+                ctx.stroke();
+                ctx.lineWidth = 1;
+                ctx.fillStyle = '#d9534f';
+                ctx.font = "16px Arial";
+                ctx.fillText("視網膜", retinaX + 10, centerY - 130);
+
+                // 4. 畫水晶體
+                ctx.beginPath();
+                ctx.ellipse(lensX, centerY, visualThickness, 80, 0, 0, 2 * Math.PI);
+                ctx.fillStyle = 'rgba(135, 206, 235, 0.5)';
+                ctx.fill();
+                ctx.strokeStyle = '#5bc0de';
+                ctx.stroke();
+
+                // 5. 標示右側焦點 (F)
+                ctx.fillStyle = 'purple';
+                ctx.beginPath(); ctx.arc(lensX + f, centerY, 4, 0, Math.PI * 2); ctx.fill();
+                ctx.fillText("F", lensX + f - 5, centerY + 15);
+
+                // 6. 畫觀看物體 (正立的綠色樹木)
+                drawTree(objX, centerY, objHeight);
+
+                // --- 物理計算 ---
+                let q = 0; 
+                let imgX = 0;
+                let imgHeight = 0;
+                let isInfinity = false;
+
+                if (p === f) {
+                    isInfinity = true;
+                    q = 9999; 
+                    imgX = 9999;
+                } else {
+                    q = (p * f) / (p - f);
+                    imgX = lensX + q;
+                    imgHeight = objHeight * (-q / p); // 計算成像高度 (負值代表倒立)
+                }
+
+                // 判斷是否對焦在視網膜上 (容錯值 ±5)
+                const focusError = Math.abs(imgX - retinaX);
+                const isFocused = focusError < 5 && !isInfinity;
+                
+                let focusStatus = "";
+                let statusClass = "";
+                if (isInfinity) {
+                    focusStatus = "無法成像：光線平行，落在無限遠處";
+                    statusClass = "blurry";
+                } else if (isFocused) {
+                    focusStatus = "✨ 完美對焦！成像清晰！ ✨";
+                    statusClass = "focused";
+                } else if (imgX > 0 && imgX < retinaX) {
+                    focusStatus = "近視狀態：影像落在視網膜前方 (水晶體太厚了)";
+                    statusClass = "blurry";
+                } else if (imgX > retinaX) {
+                    focusStatus = "遠視狀態：影像落在視網膜後方 (水晶體太薄了)";
+                    statusClass = "blurry";
+                } else {
+                    focusStatus = "虛像狀態：無法在視網膜上成像";
+                    statusClass = "blurry";
+                }
+
+                statusText.innerHTML = `物距: <strong>${p}</strong> | 焦距: <strong>${f}</strong> | 實際成像位置: <strong>${isInfinity || q < 0 ? '無法在右側成像' : imgX.toFixed(0)}</strong><br>
+                <span class="focus-text ${statusClass}">${focusStatus}</span>`;
+
+                // 7. 畫光路圖
+                const extendX = 1200;
+                const ray1_endY = (centerY - objHeight) + extendX * (objHeight / f);
+                const ray2_endY = centerY + extendX * (objHeight / p);
+
+                drawRay(objX, centerY - objHeight, lensX, centerY - objHeight, lensX + extendX, ray1_endY);
+                drawRay(objX, centerY - objHeight, lensX, centerY, lensX + extendX, ray2_endY);
+
+                // 8. 畫出實際成像
+                if (q > 0 && !isInfinity) {
+                    ctx.globalAlpha = isFocused ? 1.0 : 0.3; // 沒對準視網膜時，影像變半透明模糊
+                    drawTree(imgX, centerY, imgHeight);      // 畫出倒立的樹木
+                    ctx.globalAlpha = 1.0;
+                    
+                    // 畫出實際成像位置的輔助虛線
+                    ctx.beginPath();
+                    ctx.moveTo(imgX, centerY + 100);
+                    ctx.lineTo(imgX, centerY - 100);
+                    ctx.strokeStyle = isFocused ? '#28a745' : '#aaa';
+                    ctx.setLineDash([5, 5]);
+                    ctx.stroke();
+                    ctx.setLineDash([]);
+                }
+            }
+
+            // 輔助函數：畫樹
+            function drawTree(x, y, height) {
+                const trunkWidth = Math.abs(height) * 0.2;
+                const crownRadius = Math.abs(height) * 0.6;
+                const dir = height > 0 ? -1 : 1; 
+                
+                ctx.fillStyle = '#8B4513';
+                ctx.fillRect(x - trunkWidth/2, y, trunkWidth, dir * Math.abs(height));
+                
+                ctx.beginPath();
+                ctx.arc(x, y + dir * Math.abs(height), crownRadius, 0, Math.PI * 2);
+                ctx.fillStyle = '#228B22';
+                ctx.fill();
+            }
+
+            // 輔助函數：畫光線折射
+            function drawRay(x1, y1, x2, y2, x3, y3) {
+                ctx.beginPath();
+                ctx.moveTo(x1, y1);
+                ctx.lineTo(x2, y2);
+                ctx.lineTo(x3, y3);
+                ctx.strokeStyle = 'rgba(255, 165, 0, 0.7)';
+                ctx.lineWidth = 2;
+                ctx.stroke();
+                ctx.lineWidth = 1;
+            }
+
+            // 綁定事件
+            objPosSlider.addEventListener('input', (e) => {
+                objPosVal.innerText = e.target.value;
+                draw();
+            });
+            thicknessSlider.addEventListener('input', (e) => {
+                thicknessVal.innerText = e.target.value;
+                draw();
+            });
+
+            // 初始繪製
+            draw();
+        };
+    </script>
+</body>
+</html>

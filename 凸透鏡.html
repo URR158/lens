@@ -1,0 +1,227 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>凸透鏡成像模擬器 (修正聚焦版)</title>
+    <style>
+        body {
+            font-family: "微軟正黑體", sans-serif;
+            background-color: #f4f4f9;
+            text-align: center;
+            margin: 0;
+            padding: 20px;
+        }
+        canvas {
+            background-color: #ffffff;
+            border: 2px solid #333;
+            box-shadow: 0 4px 8px rgba(0,0,0,0.1);
+            margin-top: 20px;
+        }
+        .controls {
+            display: flex;
+            justify-content: center;
+            gap: 40px;
+            margin-top: 20px;
+            background: #fff;
+            padding: 15px;
+            border-radius: 8px;
+            box-shadow: 0 2px 5px rgba(0,0,0,0.1);
+            max-width: 800px;
+            margin-left: auto;
+            margin-right: auto;
+        }
+        .slider-group {
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+        }
+        input[type="range"] {
+            width: 200px;
+            cursor: pointer;
+        }
+        .info {
+            margin-top: 15px;
+            font-size: 1.1em;
+            color: #444;
+        }
+    </style>
+</head>
+<body>
+
+    <h2>🔍 凸透鏡成像物理小遊戲</h2>
+    
+    <div class="controls">
+        <div class="slider-group">
+            <label for="lensPos">移動凸透鏡位置 (物距 p): <span id="lensPosVal">200</span></label>
+            <input type="range" id="lensPos" min="60" max="400" value="200">
+        </div>
+        <div class="slider-group">
+            <label for="focalLength">改變焦距 (f): <span id="focalVal">100</span></label>
+            <input type="range" id="focalLength" min="30" max="150" value="100">
+        </div>
+    </div>
+
+    <div class="info" id="statusText">物距: 150 | 像距: 300 | 放大率: -2 (倒立實像)</div>
+
+    <canvas id="simCanvas" width="800" height="400"></canvas>
+
+    <script>
+        const canvas = document.getElementById('simCanvas');
+        const ctx = canvas.getContext('2d');
+        const lensPosSlider = document.getElementById('lensPos');
+        const focalSlider = document.getElementById('focalLength');
+        const lensPosVal = document.getElementById('lensPosVal');
+        const focalVal = document.getElementById('focalVal');
+        const statusText = document.getElementById('statusText');
+
+        // 物理常數設定
+        const centerY = canvas.height / 2; // 主光軸位置
+        const objX = 50;                   // 物體固定在畫面左側 X=50 的位置
+        const objHeight = 60;              // 物體高度
+
+        function draw() {
+            // 取得當前滑軌數值
+            const lensX = parseInt(lensPosSlider.value);
+            const f = parseInt(focalSlider.value);
+            const p = lensX - objX; // 物距 (透鏡位置 - 物體位置)
+            
+            // 清空畫布
+            ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+            // 1. 畫主光軸
+            ctx.beginPath();
+            ctx.moveTo(0, centerY);
+            ctx.lineTo(canvas.width, centerY);
+            ctx.strokeStyle = '#999';
+            ctx.setLineDash([5, 5]); // 虛線
+            ctx.stroke();
+            ctx.setLineDash([]);     // 恢復實線
+
+            // 2. 畫凸透鏡 (用一個藍色橢圓代替)
+            ctx.beginPath();
+            ctx.ellipse(lensX, centerY, 10, 100, 0, 0, 2 * Math.PI);
+            ctx.fillStyle = 'rgba(100, 150, 255, 0.4)';
+            ctx.fill();
+            ctx.strokeStyle = '#0055ff';
+            ctx.stroke();
+
+            // 3. 標示焦點 (F)
+            ctx.fillStyle = 'red';
+            ctx.beginPath(); ctx.arc(lensX - f, centerY, 4, 0, Math.PI * 2); ctx.fill(); // 左焦點
+            ctx.beginPath(); ctx.arc(lensX + f, centerY, 4, 0, Math.PI * 2); ctx.fill(); // 右焦點
+            ctx.fillText("F", lensX - f - 5, centerY + 15);
+            ctx.fillText("F", lensX + f - 5, centerY + 15);
+
+            // 4. 畫物體 (紅色箭頭)
+            drawArrow(objX, centerY, objX, centerY - objHeight, 'red', 3);
+
+            // --- 物理計算 ---
+            let q = 0; // 像距
+            let m = 0; // 放大率
+            let imgX = 0;
+            let imgHeight = 0;
+
+            // 畫光路圖用的延伸長度
+            const extendX = 1000; 
+
+            // 計算光線的 Y 軸終點
+            // 第一條光線：平行光折射後過右側焦點。因 Canvas Y 軸向下遞增，所以加上 objHeight/f 的斜率
+            const ray1_endY = (centerY - objHeight) + extendX * (objHeight / f);
+            // 第二條光線：過鏡心不偏折。斜率為 objHeight/p
+            const ray2_endY = centerY + extendX * (objHeight / p);
+
+            if (p === f) {
+                // 物體在焦點上，不成像 (成像於無限遠)
+                statusText.innerHTML = `物距: ${p} = 焦距: ${f} | <strong>無法成像 (光線平行於無限遠)</strong>`;
+                
+                drawRay(objX, centerY - objHeight, lensX, centerY - objHeight, lensX + extendX, ray1_endY);
+                drawRay(objX, centerY - objHeight, lensX, centerY, lensX + extendX, ray2_endY);
+                return;
+            } else {
+                // 套用透鏡公式 1/p + 1/q = 1/f => q = (p*f)/(p-f)
+                q = (p * f) / (p - f);
+                m = -q / p; // 放大率公式
+                imgX = lensX + q;
+                imgHeight = objHeight * m; // 如果是倒立，m 為負，畫圖方向剛好相反
+            }
+
+            // 更新文字資訊
+            let imgType = q > 0 ? "倒立實像" : "正立虛像";
+            if(Math.abs(m) > 1) imgType += " (放大)";
+            else if(Math.abs(m) < 1) imgType += " (縮小)";
+            else imgType += " (相等)";
+
+            statusText.innerHTML = `物距 (p): <strong>${p}</strong> | 焦距 (f): <strong>${f}</strong> | 像距 (q): <strong>${q.toFixed(1)}</strong> | 放大率: <strong>${m.toFixed(2)}</strong><br><span style="color:${q>0?'blue':'green'}">當前成像：${imgType}</span>`;
+
+            // 5. 畫實體光路圖 (折射後的光線)
+            drawRay(objX, centerY - objHeight, lensX, centerY - objHeight, lensX + extendX, ray1_endY); // 平行光過焦點
+            drawRay(objX, centerY - objHeight, lensX, centerY, lensX + extendX, ray2_endY);             // 過鏡心不偏折
+
+            // 如果是虛像，畫往回延伸的虛線
+            if (q < 0) {
+                ctx.setLineDash([5, 5]);
+                ctx.strokeStyle = '#aaa';
+                // 光線一的反向延伸
+                ctx.beginPath();
+                ctx.moveTo(lensX, centerY - objHeight);
+                ctx.lineTo(imgX, centerY - imgHeight); 
+                ctx.stroke();
+
+                // 光線二的反向延伸
+                ctx.beginPath();
+                ctx.moveTo(lensX, centerY);
+                ctx.lineTo(imgX, centerY - imgHeight);
+                ctx.stroke();
+                ctx.setLineDash([]);
+            }
+
+            // 6. 畫成像 (藍色實像或綠色虛像)
+            drawArrow(imgX, centerY, imgX, centerY - imgHeight, q > 0 ? 'blue' : 'green', 3);
+        }
+
+        // 輔助函數：畫箭頭
+        function drawArrow(fromx, fromy, tox, toy, color, width) {
+            const headlen = 10; 
+            const dx = tox - fromx;
+            const dy = toy - fromy;
+            const angle = Math.atan2(dy, dx);
+            ctx.beginPath();
+            ctx.moveTo(fromx, fromy);
+            ctx.lineTo(tox, toy);
+            ctx.lineTo(tox - headlen * Math.cos(angle - Math.PI / 6), toy - headlen * Math.sin(angle - Math.PI / 6));
+            ctx.moveTo(tox, toy);
+            ctx.lineTo(tox - headlen * Math.cos(angle + Math.PI / 6), toy - headlen * Math.sin(angle + Math.PI / 6));
+            ctx.strokeStyle = color;
+            ctx.lineWidth = width;
+            ctx.stroke();
+            ctx.lineWidth = 1; // reset
+        }
+
+        // 輔助函數：畫光線折射
+        function drawRay(x1, y1, x2, y2, x3, y3) {
+            ctx.beginPath();
+            ctx.moveTo(x1, y1);
+            ctx.lineTo(x2, y2); // 入射光
+            ctx.lineTo(x3, y3); // 折射光
+            ctx.strokeStyle = 'rgba(255, 165, 0, 0.7)'; // 橘色光線
+            ctx.lineWidth = 2;
+            ctx.stroke();
+            ctx.lineWidth = 1;
+        }
+
+        // 綁定事件
+        lensPosSlider.addEventListener('input', (e) => {
+            lensPosVal.innerText = e.target.value;
+            draw();
+        });
+        focalSlider.addEventListener('input', (e) => {
+            focalVal.innerText = e.target.value;
+            draw();
+        });
+
+        // 初始繪製
+        draw();
+    </script>
+</body>
+</html>
